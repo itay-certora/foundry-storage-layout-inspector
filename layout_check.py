@@ -50,17 +50,24 @@ def _run(cmd: List[str]) -> str:
     return res.stdout.strip()
 
 
-def _artifact_contracts() -> Set[str]:
-    """Return every contract name found in Foundry `out/` artifacts."""
-    names: Set[str] = set()
+
+# ─── Helpers ──────────────────────────────────────────────────────────
+def _artifact_contract_ids() -> List[str]:
+    """
+    Return identifiers that *forge inspect* accepts.
+    For single-contract files we only need the source path, *not* "path:Name".
+    """
+    ids: List[str] = []
     for p in Path("out").rglob("*.json"):
         try:
             data = json.loads(p.read_text())
-            if "contractName" in data:
-                names.add(data["contractName"])
+            source = data.get("sourcePath")
+            # Use just the source file; avoids “Could not get storage layout”
+            if source and source not in ids:
+                ids.append(Path(source).as_posix())
         except Exception:
-            continue  # skip odd files (e.g. build-info)
-    return names
+            continue
+    return ids
 
 
 def _collect_layouts(repo: git.Repo, ref: str) -> Dict[str, List[Tuple[int, int, str, str]]]:
@@ -75,10 +82,10 @@ def _collect_layouts(repo: git.Repo, ref: str) -> Dict[str, List[Tuple[int, int,
     _run(["forge", "build", "--silent"])
 
     layouts: Dict[str, List[Tuple[int, int, str, str]]] = {}
-    for name in sorted(_artifact_contracts()):
+    for ident in sorted(_artifact_contract_ids()):
         try:
             # Ask forge for JSON; some older versions need the --json flag.
-            raw = _run(["forge", "inspect", name, "storageLayout"])
+            raw = _run(["forge", "inspect", ident, "storageLayout"])
             if not raw:
                 continue
 
@@ -112,7 +119,7 @@ def _collect_layouts(repo: git.Repo, ref: str) -> Dict[str, List[Tuple[int, int,
             continue  # ignore libraries / interfaces
 
         if entries:
-            layouts[name] = entries
+            layouts[ident] = entries
 
     return layouts
 
@@ -135,7 +142,7 @@ def _diff_one(contract: str,
     if not removed and not added:
         return
 
-    typer.secho(f"\nContract: {contract}", fg=typer.colors.CYAN, bold=True)
+    typer.secho(f"\nContract: {contract.split(':')[-1]}", fg=typer.colors.CYAN, bold=True)
 
     for e in sorted(removed):
         typer.echo(Fore.RED   + "− " + _fmt(e) + Style.RESET_ALL)
