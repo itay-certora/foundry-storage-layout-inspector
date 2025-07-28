@@ -85,7 +85,7 @@ def _collect_layouts(repo: git.Repo, ref: str) -> Dict[str, List[Tuple[int, int,
     for ident in sorted(_artifact_contract_ids()):
         try:
             # Ask forge for JSON; some older versions need the --json flag.
-            raw = _run(["forge", "inspect", ident, "storageLayout"])
+            raw = _run(["forge", "inspect", ident, "storageLayout", "--json"]).strip()
             if not raw:
                 continue
 
