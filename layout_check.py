@@ -1,3 +1,4 @@
+#! /usr/bin/env python3 
 """
 layout-check
 ~~~~~~~~~~~~
@@ -76,21 +77,40 @@ def _collect_layouts(repo: git.Repo, ref: str) -> Dict[str, List[Tuple[int, int,
     layouts: Dict[str, List[Tuple[int, int, str, str]]] = {}
     for name in sorted(_artifact_contracts()):
         try:
-            raw = _run(["forge", "inspect", name, "storage"])
+            # Ask forge for JSON; some older versions need the --json flag.
+            raw = _run(["forge", "inspect", name, "storage", "--json"])
             if not raw:
                 continue
-            items = json.loads(raw)  # forge prints JSON when storage exists
+
+            try:
+                items = json.loads(raw)
+                entries: List[Tuple[int, int, str, str]] = []
+                for it in items:
+                    slot_raw = it["slot"]
+                    slot = int(slot_raw, 0) if isinstance(slot_raw, str) else int(slot_raw)
+                    offset = int(it.get("offset", 0))
+                    label = it.get("label", "")
+                    typ = it.get("type", "")
+                    entries.append((slot, offset, label, typ))
+            except json.JSONDecodeError:
+                # Fallback: parse the pretty table output (| name | type | slot | offset | bytes |)
+                entries = []
+                for line in raw.splitlines():
+                    if not line.startswith("|"):
+                        continue
+                    cols = [c.strip() for c in line.strip().split("|")[1:-1]]
+                    if len(cols) < 5 or cols[0].lower() in ("variable", ""):
+                        continue  # header / separator
+                    try:
+                        slot = int(cols[2])
+                        offset = int(cols[3])
+                    except ValueError:
+                        continue
+                    label, typ = cols[0], cols[1]
+                    entries.append((slot, offset, label, typ))
         except Exception:
             continue  # ignore libraries / interfaces
 
-        entries: List[Tuple[int, int, str, str]] = []
-        for it in items:
-            slot_raw = it["slot"]
-            slot = int(slot_raw, 0) if isinstance(slot_raw, str) else int(slot_raw)
-            offset = int(it.get("offset", 0))
-            label = it.get("label", "")
-            typ = it.get("type", "")
-            entries.append((slot, offset, label, typ))
         if entries:
             layouts[name] = entries
 
