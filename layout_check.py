@@ -52,6 +52,9 @@ def _run(cmd: List[str]) -> str:
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────
+ # List of path prefixes we ignore when gathering contracts
+_IGNORE_PREFIXES = ("lib/", "test/", "script/")
+
 def _artifact_contract_ids() -> List[str]:
     """
     Scan `out/` for Foundry artifacts and yield identifiers accepted by
@@ -105,6 +108,9 @@ def _artifact_contract_ids() -> List[str]:
             continue  # cannot form identifier
 
         ident = f"{source}:{name}"
+        # Skip external libraries / tests / scripts unless explicitly requested
+        if any(ident.startswith(p) for p in _IGNORE_PREFIXES):
+            continue
         if ident not in seen:
             seen.add(ident)
             id_list.append(ident)
