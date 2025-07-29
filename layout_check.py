@@ -189,25 +189,48 @@ def _collect_layouts(repo: git.Repo, ref: str, include_paths: List[str] | None) 
 # ──────────────────────────────────────────────
 def _fmt(entry: Tuple[int, int, str, str]) -> str:
     slot, offs, lab, typ = entry
-    return f"[slot {slot:>3} | off {offs:>2}] {lab} : {typ}"
+    return f"[slot {slot:>3} | offset {offs:>2}] {lab} : {typ}"
 
+def _entry_key(e: Tuple[int, int, str, str]) -> Tuple[str, str]:
+    """Return (label, type) – enough to recognise a variable across commits."""
+    return (e[2], e[3])  # label, type
 
 def _diff_one(contract: str,
               old_: List[Tuple[int, int, str, str]],
               new_: List[Tuple[int, int, str, str]]) -> None:
     """
-    Print plain colour‑coded diff:
-    • removals   → red  “− …”
-    • additions  → green “+ …”
-    No extra risk classification icons.
+    Show removals (red), additions (green), and *moves* (yellow ↷).
+    A move = same (label,type) but different (slot,offset).
     """
+    # quick sets for ± diff
     removed = set(old_) - set(new_)
     added   = set(new_) - set(old_)
 
-    if not removed and not added:
+    # detect moves
+    old_by_key = {_entry_key(e): e for e in old_}
+    new_by_key = {_entry_key(e): e for e in new_}
+
+    moves: List[Tuple[Tuple[int,int,str,str], Tuple[int,int,str,str]]] = []
+    for k in set(old_by_key) & set(new_by_key):
+        o, n = old_by_key[k], new_by_key[k]
+        if (o[0], o[1]) != (n[0], n[1]):        # coords differ
+            moves.append((o, n))
+            removed.discard(o)
+            added.discard(n)
+
+    if not removed and not added and not moves:
         return
 
-    typer.secho(f"\nContract: {contract.split(':')[-1]}", fg=typer.colors.CYAN, bold=True)
+    typer.secho(f"\nContract: {contract.split(':')[-1]}",
+                fg=typer.colors.CYAN, bold=True)
+
+    for old_e, new_e in sorted(moves, key=lambda p: (p[0][0], p[0][1])):
+        o_slot, o_off, lab, typ = old_e
+        n_slot, n_off, _, _     = new_e
+        typer.echo(
+            Fore.YELLOW + f"↷ {lab} : {typ}  {o_slot}/{o_off} → {n_slot}/{n_off}"
+            + Style.RESET_ALL
+        )
 
     for e in sorted(removed):
         typer.echo(Fore.RED + "− " + _fmt(e) + Style.RESET_ALL)
