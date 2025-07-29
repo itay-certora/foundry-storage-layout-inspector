@@ -118,7 +118,7 @@ def _artifact_contract_ids() -> List[str]:
     return id_list
 
 
-def _collect_layouts(repo: git.Repo, ref: str) -> Dict[str, List[Tuple[int, int, str, str]]]:
+def _collect_layouts(repo: git.Repo, ref: str, include_paths: List[str] | None) -> Dict[str, List[Tuple[int, int, str, str]]]:
     """
     • checkout `ref`
     • compile with Foundry
@@ -129,8 +129,16 @@ def _collect_layouts(repo: git.Repo, ref: str) -> Dict[str, List[Tuple[int, int,
     _run(["forge", "clean", "--silent"])
     _run(["forge", "build", "--silent"])
 
+    all_idents = _artifact_contract_ids()
+    if include_paths:
+        def keep(i: str) -> bool:
+            return any(i.startswith(p) for p in include_paths)
+        all_idents = [i for i in all_idents if keep(i)]
+
+    total = len(all_idents)
     layouts: Dict[str, List[Tuple[int, int, str, str]]] = {}
-    for ident in sorted(_artifact_contract_ids()):
+    for idx, ident in enumerate(all_idents, 1):
+        typer.echo(f"      [{idx}/{total}] {ident}", err=True)
         try:
             # Ask forge for JSON; some older versions need the --json flag.
             raw = _run(["forge", "inspect", ident, "storageLayout", "--json"]).strip()
@@ -229,6 +237,13 @@ def _diff_one(contract: str,
 def diff(
     old_commit: str = typer.Argument(..., help="older git commit / tag / branch"),
     new_commit: str = typer.Argument(..., help="newer git commit / tag / branch"),
+    path: List[str] = typer.Option(
+        None,
+        "--path",
+        "-p",
+        help="Source‑file prefix(es) to include, e.g. 'src/' or 'contracts/MyLib.sol'. "
+             "If omitted, every contract in the project is inspected.",
+    ),
 ) -> None:
     """
     Compare storage layouts between *all* contracts at two git revisions.
@@ -245,10 +260,10 @@ def diff(
 
     try:
         typer.echo(f"⏳  Collecting layouts at {old_commit} …")
-        old_layouts = _collect_layouts(repo, old_commit)
+        old_layouts = _collect_layouts(repo, old_commit, path)
 
         typer.echo(f"⏳  Collecting layouts at {new_commit} …")
-        new_layouts = _collect_layouts(repo, new_commit)
+        new_layouts = _collect_layouts(repo, new_commit, path)
     finally:
         repo.git.checkout(current)
 
