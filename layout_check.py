@@ -54,20 +54,62 @@ def _run(cmd: List[str]) -> str:
 # ─── Helpers ──────────────────────────────────────────────────────────
 def _artifact_contract_ids() -> List[str]:
     """
-    Return identifiers that *forge inspect* accepts.
-    For single-contract files we only need the source path, *not* "path:Name".
+    Scan `out/` for Foundry artifacts and yield identifiers accepted by
+    `forge inspect`, in the canonical  `<relative-path>.sol:<Contract>` form.
+
+    The logic works even when artifacts lack `sourcePath` / `sourceName`
+    by reading the embedded solidity compiler metadata.
+
+    Returns
+    -------
+    List[str]
+        Ordered list without duplicates. Example:
+        ["src/Test.sol:Test", "lib/forge-std/src/console.sol:console"]
     """
-    ids: List[str] = []
-    for p in Path("out").rglob("*.json"):
-        try:
-            data = json.loads(p.read_text())
-            source = data.get("sourcePath")
-            # Use just the source file; avoids “Could not get storage layout”
-            if source and source not in ids:
-                ids.append(Path(source).as_posix())
-        except Exception:
+    seen: Set[str] = set()
+    id_list: List[str] = []
+
+    for art in Path("out").rglob("*.json"):
+        # Skip debug and build-info blobs
+        if art.name.endswith(".dbg.json") or "build-info" in art.parts:
             continue
-    return ids
+
+        try:
+            meta = json.loads(art.read_text())
+        except Exception:
+            continue  # unreadable
+
+        # 1. Try legacy keys
+        source = meta.get("sourcePath") or meta.get("sourceName")
+        name   = meta.get("contractName")
+
+        # 2. Prefer metadata.settings.compilationTarget
+        md = meta.get("metadata")
+        if md:
+            try:
+                md_obj = json.loads(md) if isinstance(md, str) else md
+                comp_target = md_obj.get("settings", {}).get("compilationTarget", {})
+                if comp_target:
+                    # there should be exactly one entry
+                    source, name = next(iter(comp_target.items()))
+            except Exception:
+                pass  # keep any legacy data we already grabbed
+
+        # 3. Derive from artefact path if still missing
+        if not source and art.parent.name.endswith(".sol"):
+            source = Path(*art.parent.parts[1:]).as_posix()
+        if not name:
+            name = art.stem
+
+        if not source or not name:
+            continue  # cannot form identifier
+
+        ident = f"{source}:{name}"
+        if ident not in seen:
+            seen.add(ident)
+            id_list.append(ident)
+
+    return id_list
 
 
 def _collect_layouts(repo: git.Repo, ref: str) -> Dict[str, List[Tuple[int, int, str, str]]]:
@@ -90,7 +132,8 @@ def _collect_layouts(repo: git.Repo, ref: str) -> Dict[str, List[Tuple[int, int,
                 continue
 
             try:
-                items = json.loads(raw)
+                data = json.loads(raw)
+                items = data["storage"] if isinstance(data, dict) and "storage" in data else data
                 entries: List[Tuple[int, int, str, str]] = []
                 for it in items:
                     slot_raw = it["slot"]
