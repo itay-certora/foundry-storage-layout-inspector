@@ -22,6 +22,7 @@ Hardhat artifacts are ignored – this is Foundry-only.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 from typing import Dict, List, Set, Tuple
@@ -127,7 +128,7 @@ def _collect_layouts(repo: git.Repo, ref: str, include_paths: List[str] | None) 
     repo.git.checkout(ref)
 
     _run(["forge", "clean", "--silent"])
-    _run(["forge", "build", "--silent"])
+    _run(["forge", "build", "--silent", "--skip", "test", "--skip", "script"])
 
     all_idents = _artifact_contract_ids()
     if include_paths:
@@ -154,7 +155,9 @@ def _collect_layouts(repo: git.Repo, ref: str, include_paths: List[str] | None) 
                     slot = int(slot_raw, 0) if isinstance(slot_raw, str) else int(slot_raw)
                     offset = int(it.get("offset", 0))
                     label = it.get("label", "")
-                    typ = it.get("type", "")
+                    typ_raw = it.get("type", "")
+                    # remove all ')<digits>' sequences globally
+                    typ = re.sub(r"\)\d+", ")", typ_raw)
                     entries.append((slot, offset, label, typ))
             except json.JSONDecodeError:
                 # Fallback: parse the pretty table output (| name | type | slot | offset | bytes |)
@@ -188,47 +191,29 @@ def _fmt(entry: Tuple[int, int, str, str]) -> str:
     slot, offs, lab, typ = entry
     return f"[slot {slot:>3} | off {offs:>2}] {lab} : {typ}"
 
-def _classify_change(entry: Tuple[int, int, str, str],
-                     old_coords: set[tuple[int, int]],
-                     max_live_slot: int) -> str:
-    """
-    Returns 'safe'  – addition strictly after last live slot,
-            'danger' – any removal, type change, or addition into used range.
-    """
-    slot, offs, *_ = entry
-    coord = (slot, offs)
-    if coord in old_coords:           # removal / change → danger
-        return "danger"
-    # addition
-    return "safe" if slot > max_live_slot else "danger"
-
 
 def _diff_one(contract: str,
               old_: List[Tuple[int, int, str, str]],
               new_: List[Tuple[int, int, str, str]]) -> None:
-
+    """
+    Print plain colour‑coded diff:
+    • removals   → red  “− …”
+    • additions  → green “+ …”
+    No extra risk classification icons.
+    """
     removed = set(old_) - set(new_)
     added   = set(new_) - set(old_)
 
     if not removed and not added:
         return
 
-    typer.secho(f"\nContract: {contract.split(':')[-1]}",
-                fg=typer.colors.CYAN, bold=True)
+    typer.secho(f"\nContract: {contract.split(':')[-1]}", fg=typer.colors.CYAN, bold=True)
 
-    max_live_slot = max((s for s, *_ in old_), default=-1)
-    old_coords = {(s, o) for s, o, *_ in old_}
-
-    # removals – always dangerous
     for e in sorted(removed):
-        typer.echo(Fore.RED + "− " + _fmt(e) + "  ⚠️" + Style.RESET_ALL)
+        typer.echo(Fore.RED + "− " + _fmt(e) + Style.RESET_ALL)
 
-    # additions – classify
     for e in sorted(added):
-        risk = _classify_change(e, old_coords, max_live_slot)
-        icon = "✅" if risk == "safe" else "⚠️"
-        colour = Fore.GREEN if risk == "safe" else Fore.YELLOW
-        typer.echo(colour + "+ " + _fmt(e) + f"  {icon}" + Style.RESET_ALL)
+        typer.echo(Fore.GREEN + "+ " + _fmt(e) + Style.RESET_ALL)
 
 # ──────────────────────────────────────────────
 # CLI command
