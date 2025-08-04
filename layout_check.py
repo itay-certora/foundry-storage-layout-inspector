@@ -126,6 +126,8 @@ def _collect_layouts(repo: git.Repo, ref: str, include_paths: List[str] | None) 
     • return {contract → [(slot, offset, label, type), …]}
     """
     repo.git.checkout(ref)
+    # ensure submodules match that revision
+    repo.git.submodule("update", "--init", "--recursive")
 
     _run(["forge", "clean", "--silent"])
     _run(["forge", "build", "--silent", "--skip", "test", "--skip", "script"])
@@ -274,6 +276,11 @@ def diff(
         new_layouts = _collect_layouts(repo, new_commit, path)
     finally:
         repo.git.checkout(current)
+        try:
+            repo.git.submodule("update", "--init", "--recursive")
+        except Exception:
+            # if project has no submodules, ignore
+            pass
 
     for c in sorted(set(old_layouts) | set(new_layouts)):
         _diff_one(c, old_layouts.get(c, []), new_layouts.get(c, []))
