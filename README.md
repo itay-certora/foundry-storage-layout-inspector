@@ -27,7 +27,7 @@ Use it to detect—before deploying—whether an upgrade will:
 ## 1  Installation
 
 ```bash
-git clone https://github.com/your-org/foundry-storage-layout-inspector.git
+git clone https://github.com/itay-certora/foundry-storage-layout-inspector.git
 cd foundry-storage-layout-inspector
 
 # optional: create a virtual‑env
